@@ -1,15 +1,19 @@
 #!/bin/sh
-set -e
+set -euo pipefail
+export LC_NUMERIC="C"
 
-FAN_ON_TEMP=60
-FAN_OFF_TEMP=50
+FAN_ON_TEMP=60.0
+FAN_OFF_TEMP=50.0
 FAN_PIN=18
-FAN_STATE=0
 
 LOG_FILE="/var/log/fan_control.log"
 LOG_INFO="INFO"
 LOG_ERROR="ERROR"
 LOG_WARN="WARNING"
+ON=1
+OFF=0
+
+FAN_STATE=0
 
 get_date() {
     date "+%Y.%m.%d %H:%M:%S"
@@ -21,35 +25,39 @@ log_message() {
     echo "$(get_date) [${level}] ${message}" >> $LOG_FILE
 }
 
+set_fan_state() {
+    FAN_STATE=$1
+    gpioctl $FAN_PIN $FAN_STATE
+}
+
 cleanup() {
     log_message $LOG_INFO "Shutting down fan control..."
-    gpioctl $FAN_PIN 0  # Turn off fan
+    set_fan_state $OFF
     exit 0
 }
 
-trap cleanup SIGTERM SIGINT
+trap cleanup EXIT SIGTERM SIGINT
 
 gpioctl -c $FAN_PIN out
-gpioctl $FAN_PIN 0
+set_fan_state $OFF
 
 touch $LOG_FILE
 log_message $LOG_INFO "Fan control service started"
 
 while true; do
-   CPU_TEMP=$(sysctl -n dev.cpu.0.temperature | cut -d '.' -f1) || {
-        log_message $LOG_ERROR "Failed to read CPU temperature"
-        sleep 5
-        continue
-   }
-   if [ $CPU_TEMP -ge $FAN_ON_TEMP ] && [ $FAN_STATE -eq 0 ]; then
-      FAN_STATE=1
-      gpioctl $FAN_PIN $FAN_STATE
-      log_message $LOG_INFO "Fan turned ON - CPU temperature: ${CPU_TEMP}°C"
-      sleep 5
-   elif [ $CPU_TEMP -lt $FAN_OFF_TEMP ] && [ $FAN_STATE -eq 1 ]; then
-      FAN_STATE=0
-      gpioctl $FAN_PIN $FAN_STATE
-      log_message $LOG_INFO "Fan turned OFF - CPU temperature: ${CPU_TEMP}°C"
+   CPU_TEMP=$(sysctl -n dev.cpu.0.temperature | tr -d 'C') 
+
+   if echo "$CPU_TEMP >= $FAN_ON_TEMP" | bc -l | grep -q 1; then
+      if [ $FAN_STATE -eq $OFF ]; then
+         set_fan_state $ON
+         log_message $LOG_INFO "Fan turned ON - CPU temperature: ${CPU_TEMP}°C"
+         sleep 5
+      fi
+   elif echo "$CPU_TEMP < $FAN_OFF_TEMP" | bc -l | grep -q 1; then
+      if [ $FAN_STATE -eq $ON ]; then
+        set_fan_state $OFF
+        log_message $LOG_INFO "Fan turned OFF - CPU temperature: ${CPU_TEMP}°C"
+      fi
    fi
    sleep 5
 done
