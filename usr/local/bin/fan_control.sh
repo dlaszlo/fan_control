@@ -36,7 +36,7 @@ cleanup() {
     exit 0
 }
 
-trap cleanup EXIT SIGTERM SIGINT
+trap cleanup SIGTERM SIGINT
 
 gpioctl -c $FAN_PIN out
 set_fan_state $OFF
@@ -51,8 +51,11 @@ while true; do
       if [ $FAN_STATE -eq $OFF ]; then
          set_fan_state $ON
          log_message $LOG_INFO "Fan turned ON - CPU temperature: ${CPU_TEMP}°C"
-         sleep 5
+      else
+         log_message $LOG_INFO "CPU temperature: ${CPU_TEMP}°C"
       fi
+      top -b -o cpu -n 5 | awk 'NR>7' >> $LOG_FILE
+      sleep 5
    elif echo "$CPU_TEMP < $FAN_OFF_TEMP" | bc -l | grep -q 1; then
       if [ $FAN_STATE -eq $ON ]; then
         set_fan_state $OFF
